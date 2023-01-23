@@ -1,0 +1,19 @@
+#!/usr/bin/env ruby
+
+require 'date'
+
+today = DateTime.now
+
+puts "title?"
+title = gets.chomp
+
+file_name = "#{today.strftime('%F')}-#{title.downcase.gsub(' ', '-')}.md"
+
+File.open("_posts/#{file_name}", "w") do |f|
+  f.write <<-EOF
+---
+layout: post
+title: #{title}
+---
+  EOF
+end
