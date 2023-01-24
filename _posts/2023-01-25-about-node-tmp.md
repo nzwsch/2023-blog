@@ -9,6 +9,8 @@ title: node-tmpについて
 
 こちらはREADMEからの引用なのですが、プロセスが終了するまでは`/tmp`の中身は削除されません。一回きりのスクリプトであればこの要件を満たすことができますが、Webアプリケーションだとこうはいきません。そのため一定期間で削除する必要が出てくるので、今回はこのあたりの挙動を考えてみます。
 
+## 一時ディレクトリを作成してから実行する
+
 ```javascript
 var Queue = require("bull");
 var tmp = require("tmp");
@@ -76,42 +78,59 @@ tmp.dir(function (err, tmpPath) {
 その解決策としてはBullを使って新しいジョブをエンキューする前に一時ディレクトリを作成しておけばよいと思いました。ただしこの方法はあくまでもホストOS側にBullが動作している前提なので必ずしも正しくありません。
 
 ```javascript
+function work(job, done) {
+  console.log(job.data.tmpPath);
+
+  if (Math.random() > 0.25) {
+    done(new Error("oops."));
+  }
+
+  done(null, "success!");
+}
+
 queue.process(function (job, done) {
-  function work(tmpPath) {
-    console.log(tmpPath);
-
-    if (Math.random() > 0.25) {
-      throw new Error("oops.");
-    }
-
-    done(null, "success!");
+  if (job.data.tmpPath) {
+    work(job, done);
+    return;
   }
 
-  var tmpPath = job.data.tmpPath;
+  var tmpobj = tmp.dirSync();
 
-  if (tmpPath) {
-    work(tmpPath);
-  } else {
-    tmp.dir(function (err, tmpPath) {
-      if (err) {
-        done(err);
-      }
-
-      job
-        .update(Object.assign(job.data, { tmpPath: tmpPath }))
-        .then(function () {
-          work(tmpPath);
-        })
-        .catch(done);
-    });
-  }
+  job
+    .update(
+      Object.assign(job.data, {
+        tmpPath: tmpobj.name,
+      })
+    )
+    .then(function () {
+      work(job, done);
+    })
+    .catch(done);
 });
 ```
 
-（可読性の面でES5も書いていてそろそろ厳しいなと思うのですが）もしタスクを開始あるいは再開した場合に一時ディレクトリがあればそれを使うし、なければ新しく作ってからタスクを開始するようにしてあげればよいと思います。実際処理の終了後にディレクトリを残すのか、あるいは消すのかはディスク容量とも相談なのですが、`/tmp`の処理はホストOS側に任せるとしてひとまずはこれでよいのではないでしょうか。
+**NOTE:** 調べてみると`Object.assign`はES5の時代には使えなかったようなので、ES6も許容すると`const`やアロー関数使わない縛りの意味をなしませんね。😅
+
+もしタスクを開始あるいは再開した場合に一時ディレクトリがあればそれを使うし、なければ新しく作ってからタスクを開始するようにしてあげればよいと思います。実際処理の終了後にディレクトリを残すのか、あるいは消すのかはディスク容量とも相談なのですが、`/tmp`の処理はホストOS側に任せるとしてひとまずはこれでよいのではないでしょうか。
 
 ```
 $ docker exec ea6f3816455d ls /tmp/tmp-287-KcwsoHrB0N9K
 ```
 
 いざジョブを開始してみたところ運悪く(?)5回も連続でエラーが発生しましたが、一度作成したディレクトリを使いまわしてくれるようになったのでディレクトリが増え続けることがなくなりました。この処理であれば`os.tmpdir()`を使えばわざわざライブラリの力を借りる必要はなかったのかもしれませんが、`cleanupCallback`や`cleanupCallback`は後から選択すればよいでしょう。
+
+## おまけ
+
+この章では先ほどの例に出てきた`work`関数の中身について少し見てみたいと思います。
+
+```javascript
+var { spawn } = require("child_process");
+
+module.exports = function work(job, done) {
+  var pwd = spawn("pwd", {
+    cwd: job.data.tmpPath,
+  });
+};
+```
+
+Node.jsの[child_process.spawn()](https://nodejs.org/api/child_process.html#child_processspawncommand-args-options)では`cwd`をオプション引数として渡すことができるので、ここに使いたいコマンドと生成した一時ディレクトリを渡せばそのディレクトリの中に`cd`で移動して実行しているようにプログラムを実行することができます。あくまでこの書き方だと`cleanupCallback`を使えないという課題は残るのですが、これで任意のプログラムを制御しやすくなりました。
