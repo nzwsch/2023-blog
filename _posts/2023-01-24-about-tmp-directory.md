@@ -11,11 +11,14 @@ Alpine Linuxを使っていて、ふと`/tmp`ディレクトリがどう扱わ�
 # touch /tmp/secret
 # reboot
 ```
+
 まずは**Ubuntu 22.04**の仮想マシンを作成して、`secret`というファイルを作成してから再起動してみました。
+
 ```
 # cat /tmp/secret
 cat: /tmp/secret: No such file or directory
 ```
+
 ファイルが存在しないので、これは意図した挙動であるといえるでしょう。
 
 ## コンテナの再起動
@@ -28,6 +31,7 @@ FROM node:18.13.0-alpine
 RUN npm install --global serve
 CMD serve
 ```
+
 ```yaml
 # docker-compose.yml
 version: "3"
@@ -65,7 +69,7 @@ cat: can't open '/tmp/secret': No such file or directory
 ## ホストOSの`/tmp`ディレクトリをマウントする
 
 ```yaml
-version: '3'
+version: "3"
 services:
   node:
     build: .
